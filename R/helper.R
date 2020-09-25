@@ -24,7 +24,7 @@
 #' @param response name of response variable. If null, tries to extract from model.
 #' @param sectionvars names of sectionvars. If null, extracts from data.
 #' @param conditionvars names of condition vars. If null, extracts from data.
-#'@param predsInit Optionally provide starting value for some predictors. Defaults to median, or mode for factors
+#'@param predsInit Optionally provide starting value for some predictors. Defaults to medoid.
 #'@param pointColor a color, or the name of variable to be used for coloring. If the named variable is numeric, it is first converted to a factor with 3 levels.
 #'@param  cPlotPCP if TRUE, conditionplots are drawn as a single PCP (for more than two conditionvars)
 #'@param cPlotn Defaults to 1000. Shows a sample of this number of points in conditionplots. Non-numeric values are ignored.
@@ -33,11 +33,10 @@
 #'@param thresholdmax maximum value allowed of threshold.
 #'@param linecols vector of colors to be used for fits
 #'@param showsim if TRUE, shows sim in conditionplots with points/lines. Defaults to TRUE with 150 or fewer cases.
-
 #' @param theta3d,phi3d Angles defining the viewing direction for 3d surface. \code{theta3d}
 #'   gives the azimuthal direction and \code{phi3d} the colatitude. See
 #'   \code{\link[graphics]{persp}}.
-#' @param dataplot "pcp" or "pairs". If CVfit is NULL, used to plot the data
+#' @param dataplot "pcp" or "pairs". Used when there is no response, or more than two sectionvars.
 #' @param tours A list of pre-calculated tours
 #' @param predictArgs a list with one entry per fit, giving arguments for CVpredict
 #' @param xlim passed on to sectionplot
@@ -68,7 +67,7 @@
 condvis <- function(data,model=NULL, response=NULL,sectionvars=NULL,conditionvars=NULL,
                     predsInit=NULL, pointColor=c("steelblue", "grey0"), cPlotPCP=FALSE,
                     cPlotn = 1000,
-                    orderConditionVars=arrangeC, threshold=1, thresholdmax=8*threshold,
+                    orderConditionVars="default", threshold=1, thresholdmax=NULL,
                     linecols=NULL,showsim=NULL, theta3d = 45, phi3d = 20,
                     dataplot="pcp", tours=NULL, predictArgs=NULL,xlim=NULL,ylim=NULL,zlim=NULL,density=FALSE,
                     showdata= density==FALSE,displayHeight=950) {
@@ -76,8 +75,17 @@ condvis <- function(data,model=NULL, response=NULL,sectionvars=NULL,conditionvar
   if (!is.data.frame(data) ) 
     stop("'data' must be a data.frame")
   
-  if (thresholdmax==0) thresholdmax <-1
+  ctype <- which(sapply(data, function(v) !is.numeric(v) & ! is.factor(v)))
+  for (ct in ctype) data[[ct]] <- as.factor(data[[ct]])
+  # if (length(ctype)>0)
+  # warning(paste0("Variables ", paste0(names(data)[ctype], collapse=" ")," changed to factor", 
+  #                collapse=" "))
+  
+  
+  # if (thresholdmax==0) thresholdmax <-1
   if (is.null(model)) showdata<- TRUE
+
+  
   
   if (density ) {
     response <- "densityY"
@@ -104,8 +112,8 @@ condvis <- function(data,model=NULL, response=NULL,sectionvars=NULL,conditionvar
       else linecols <- colors()[1:length(model)]
 
       if (is.null(response) && !density){
-        frm <- try(formula(model[[1]], silent=TRUE))
-        if (class(frm) != "try-error")
+        frm <-  try(formula(model[[1]]), silent=T)
+         if (class(frm) != "try-error")
           response <- all.vars(frm)[1]
         else stop("could not extract response from 'model'.")
       }
@@ -141,7 +149,7 @@ condvis <- function(data,model=NULL, response=NULL,sectionvars=NULL,conditionvar
   } else {
     probs <- FALSE
     view3d <- FALSE
-    response <- NULL
+    # response <- NULL
     if (!is.null(sectionvars) & !is.null(conditionvars))
       preds <- c(sectionvars, conditionvars)
     else if (is.null (conditionvars)){
@@ -157,34 +165,59 @@ condvis <- function(data,model=NULL, response=NULL,sectionvars=NULL,conditionvar
   
   if (is.numeric(r)) datar <- data[,-r]
   else datar <- data
-
-  predsInit1 <- datar[1,]
-  predsVal <- lapply(datar, function(p) {
-    if (is.factor(p)) names( which.max(table(p)))
-    else median(p)
-  })
-  predsInit1[1,]<- predsVal
-  if (! is.null(predsInit)){
-    np <- intersect(names(predsInit), names(predsInit1))
-    predsInit1[1,np] <- predsInit[1,np]
+  
+  np <- names(predsInit)
+  np1 <- setdiff(names(datar), np)
+  
+  
+  # predsInit1 <- datar[1,]
+  # 
+  # 
+  # predsVal <- lapply(datar, function(p) {
+  #   if (is.factor(p)) names( which.max(table(p)))
+  #   else median(p)
+  # })
+  # predsInit1[1,]<- predsVal
+  
+  if (length(np1)> 0){
+    predsInit1 <- medoid(data[,np1,drop=FALSE]) 
   }
+  
+  
+  
+  predsInit2 <- datar[1,,drop=F]
+  
+  if (length(np1)> 1){
+    predsInit2[1,np]<- predsInit[1,np]
+    predsInit2[1,np1]<- predsInit1[1,np1]
+  }
+  else predsInit2[1,np]<- predsInit[1,np]
+  
 
-  data <- pointColor2var(data, pointColor[1])
+
+  # data <- pointColor2var(data, pointColor[1])
 
   if (is.null(showsim)) showsim <- nrow(data)<= 150 && showdata
 
-  if (thresholdmax==0) thresholdmax <-1
+  # if (thresholdmax==0) thresholdmax <-1
+  
+  # if (!(is.numeric(thresholdmax) && thresholdmax> threshold)) thresholdmax <- length(preds)*threshold
+  if (!(is.numeric(thresholdmax) && thresholdmax> threshold)) 
+    thresholdmax <- max(8*threshold, round(sqrt(length(preds))*threshold))
   # if (length(sectionvars)==1) sectionvars <- c(sectionvars, "None")
-  ui <- createCVUI(model,data,sectionvars,preds,pointColor,threshold, thresholdmax,tours, probs, view3d)
-
-  server <- createCVServer(model,data, response,sectionvars,conditionvars,predsInit1,
+  
+  ui <- createCVUI(model,data,response,sectionvars,preds,pointColor,threshold, thresholdmax,tours,
+                   probs, view3d,showsim=showsim,cPlotPCP = cPlotPCP)
+  
+  server <- createCVServer(model,data, response,sectionvars,conditionvars,predsInit2,pointColor,
                            cPlotPCP = cPlotPCP, cPlotn = cPlotn,
-                           orderConditionVars=orderConditionVars,
-                           threshold=threshold,thresholdmax=thresholdmax, linecols=linecols, showsim=showsim,
+                           orderConditionVars=orderConditionVars, 
+                           threshold=threshold,thresholdmax=thresholdmax, tours=tours,linecols=linecols, 
                            dataplot=dataplot,theta3d, phi3d, probs=probs, view3d=view3d,
                            predictArgs=predictArgs,xlim=xlim,ylim=ylim, zlim=zlim,density=density,
                            showdata=showdata)
   s <-shiny::shinyApp(ui, server,options=list(width="100%", height=displayHeight, width=700))
+ 
   if(interactive()) 
     runApp(s) 
    else s
@@ -192,79 +225,5 @@ condvis <- function(data,model=NULL, response=NULL,sectionvars=NULL,conditionvar
 
 
 
-
-pointColor2var <- function(data, pointColor){
-
-  if (pointColor %in% names(data) & is.numeric(data[[pointColor]])){
-    newname <- paste0(pointColor,"F3")
-    data[[newname]] <- cut(data[[pointColor]],3)
-    pointColor <- newname
-  }
-
-
-  if (pointColor %in% names(data)){
-    pointCols <-rev(scales::hue_pal()(max(4,length(levels(data[[pointColor]])))))
-    pointCols <- pointCols[as.numeric(data[[pointColor]])]
-  } else pointCols <- pointColor
-
-  data$pointCols <- pointCols
-  data
-}
-
-
-
-#' Fade colours according to a weight vector
-#'
-#' The colours whose weights are less than 1 are diluted. Colours whose weight is zero are returned as white, 
-#' other weights are grouped in \code{nlevels} groups and colours diluted proportionally.
-#' 
-#' @param col A vector of colour
-#' @param weights A vector of weights, values between 0 and 1
-#' @param nlevels  The number of groups
-#'
-#' @return A vector of colours
-#' @export
-#'
-
-weightcolor <-
-  function(col, weights, nlevels=5)
-  {
-
-    n <- length(weights)
-    if (length(col) ==1)
-     col <- rep(col, length.out = n)
-
-    ## Discretise `weights`. We just want nlevels different shades
-
-    if (nlevels==3)
-      wmax <- c(0, 0.4, 0.7, 1) # Mark's settings
-    else wmax <- (0:nlevels)/nlevels
-
-     weights <- wmax[findInterval(weights, c(0, .Machine$double.eps,
-                                                         wmax[-1]), rightmost.closed = TRUE)]
-
-
-    ## We won't perform calculations on elements with `weight` == 0.
-
-    weightsgr0 <- which(weights > 0)
-    data.order <- weightsgr0[order(weights[weightsgr0])]
-
-    ## Linearly fade the colours in `col` to white in RGB space according to their
-    ## `weights`.
-
-    # newcol <- (col2rgb(col[data.order]) * matrix(rep(weights[data.order], 3),
-    #                                              nrow = 3, byrow = TRUE) / 255) + matrix(rep(1 - weights[data.order], 3),
-    #                                                                                      nrow = 3, byrow = TRUE)
-    #
-    newcol1 <- t(col2rgb(col[data.order])) * weights[data.order]/255+ 1-weights[data.order]
-
-    data.colour <- rep(NA, n)
-    # data.colour[data.order] <- rgb(t(newcol))
-    data.colour[data.order] <- rgb(newcol1)
-
-    ## Return the weighted colours with the order as attribute.
-
-    structure(data.colour, order = data.order)
-  }
 
 

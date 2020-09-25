@@ -11,6 +11,8 @@
 #' @param pthreshold Used for calculating classes from probs, in the two class case
 #' @param ylevels The levels of the response, when it is a factor
 #' @param ptrans A function to apply to the result
+#' @param pinterval NULL, "confidence" or "prediction". Only for lm, parsnip, mlr(regression, confidence only)
+#' @param pinterval_level Defaults to 0.95
 #' @param type For some predict methods
 #' @param n.trees Used by CVpredict.gbm, passed to predict
 #' @param s Used by CVpredict.glmnet and CVpredict.cv.glmnet, passed to predict
@@ -44,7 +46,7 @@
 #' CVpredict(f, ptype="probmatrix") # gives prob of both levels
 
 
-CVpredict <- function (fit,newdata,...,ptype="pred",pthreshold=NULL, ylevels=NULL,ptrans=NULL) {
+CVpredict <- function (fit,newdata,...,ptype="pred",pthreshold=NULL, ylevels=NULL,ptrans=NULL,pinterval=NULL,pinterval_level=0.95) {
   UseMethod("CVpredict", fit)
 }
 
@@ -72,7 +74,7 @@ CVpredict <- function (fit,newdata,...,ptype="pred",pthreshold=NULL, ylevels=NUL
 #
 
 
-calcPred <- function(ptype,pred=NULL, pthreshold=NULL, ylevels=NULL,ptrans=NULL){
+calcPred <- function(ptype,pred=NULL, pthreshold=NULL, ylevels=NULL,ptrans=NULL, interval=NULL){
   
   thresholdfn <- function(p){
     if (is.numeric(pthreshold) & length(ylevels) ==2){
@@ -112,7 +114,12 @@ calcPred <- function(ptype,pred=NULL, pthreshold=NULL, ylevels=NULL,ptrans=NULL)
       }
     }
   }
-  return(if (!is.null(ptrans)) ptrans(ans) else ans)
+  if (!is.null(interval) & is.vector(ans) & is.numeric(ans) ){
+    ans <- cbind(ans, interval)
+  }
+  ans <- if (!is.null(ptrans)) ptrans(ans) else ans
+  
+  return(ans)
 }
 
 
@@ -121,25 +128,47 @@ calcPred <- function(ptype,pred=NULL, pthreshold=NULL, ylevels=NULL,ptrans=NULL)
 #' @describeIn CVpredict  CVpredict method
 #' @export
 
-CVpredict.default <- function (fit,newdata,...,ptype="pred",pthreshold=NULL, ylevels=NULL, ptrans=NULL) {
+CVpredict.default <- function (fit,newdata,...,ptype="pred",pthreshold=NULL, pinterval=NULL,pinterval_level=0.95,
+                               ylevels=NULL, ptrans=NULL) {
   p <-drop(predict(fit, newdata, ...))
   calcPred(ptype,p, pthreshold, ylevels,ptrans)
 }
 
 
+#' @describeIn CVpredict  CVpredict method
+#' @export
+
+CVpredict.lm <- function (fit,newdata,...,ptype="pred",pthreshold=NULL, 
+                          pinterval=NULL,pinterval_level=0.95,ylevels=NULL, ptrans=NULL) {
+  p <-predict(fit, newdata, interval=pinterval,level=pinterval_level,...)
+  if (is.null(pinterval))
+  calcPred(ptype,p, pthreshold, ylevels,ptrans)
+  else calcPred(ptype,p[,1], pthreshold, ylevels,ptrans, p[,2:3])
+}
+
 
 #' @describeIn CVpredict  CVpredict method
 #' @export
 
-CVpredict.glm <- function (fit, ..., type="response", ptype="pred", pthreshold=NULL, ylevels=NULL, ptrans=NULL) {
+CVpredict.glm <- function (fit, ..., type="response", ptype="pred", pthreshold=NULL, 
+                           pinterval=NULL,pinterval_level=0.95,ylevels=NULL, ptrans=NULL) {
+  
   if (is.null(ylevels))
     ylevels <- levels(model.frame(fit)[,1])
   #if (length(ylevels) >2) pthreshold <- NULL
-  p <- predict(fit, ...,type=type)
+  if (is.null(ylevels) & type=="response" & isTRUE(pinterval =="confidence")){
+    res <- predict(fit, ...,type=type, se.fit=TRUE)
+    zq <- qnorm(1- (1- pinterval_level)/2)
+    p <- cbind(res$fit, res$fit - zq*res$se.fit, res$fit + zq*res$se.fit)
+    colnames(p)<- c("fit",       "lwr",      "upr")
+    p
+  }
+  else {p <- as.vector(predict(fit, ...,type=type))
   if (fit$family$family == "binomial" & type == "response" & ptype=="pred"){
     if (is.null(pthreshold)) pthreshold <- .5
    }
   calcPred(ptype,p, pthreshold, ylevels,ptrans)
+  }
 }
 
 
@@ -193,7 +222,7 @@ CVpredict.nnet <- function (fit, ...,type=NULL, ptype="pred",pthreshold=NULL, yl
   }
   else if (ptype=="pred"){
     # calc predicted classes
-    p <- predict(fit,...,type="class")
+    p <- factor(predict(fit,...,type="class"), levels=ylevels)
   }
   else {
     # ptype is "prob" or "probmatrix", calculate probs
@@ -233,7 +262,38 @@ CVpredict.randomForest <- function (fit, ...,type=NULL, ptype="pred",pthreshold=
   calcPred(ptype,p, pthreshold, ylevels,ptrans)
 }
 
+#' @describeIn CVpredict  CVpredict method
+#' @export
 
+CVpredict.ranger <- function (fit, ...,type=NULL, ptype="pred",pthreshold=NULL, ylevels=NULL,ptrans=NULL) {
+  if (is.null(ylevels)){
+    p <- fit$predictions
+    if (is.matrix(p)) ylevels <- colnames(p)
+    else ylevels <- levels(fit$predictions)
+  }
+
+  if (ptype=="pred" && is.null(ylevels)){
+    # numeric prediction
+     p <- predict(fit,...,type="response")$predictions
+  }
+  else if (ptype=="pred" && is.numeric(pthreshold)){
+    # calc probmatrix for class prediction using threshold
+     p <- predict(fit,...,type="response")$predictions
+    if (!is.matrix(p)) stop("Fit should be constructed with probability=TRUE")
+  }
+  else if (ptype=="pred"){
+    # calc predicted classes
+    p <- predict(fit,...,type="response")$predictions
+  }
+  else {
+    # ptype is "prob" or "probmatrix", calculate probs
+    p <- predict(fit,...,type="response")$predictions
+    if (ptype =="probmatrix" & !is.matrix(p)) 
+      stop("Fit should be constructed with probability=TRUE")
+  }
+  
+  calcPred(ptype,p, pthreshold, ylevels,ptrans)
+}
 
 
 #' @describeIn CVpredict  CVpredict method
@@ -367,8 +427,8 @@ CVpredict.svm <- function (fit,...,type=NULL, ptype="pred",pthreshold=NULL, ylev
 
 CVpredict.gbm <- function (fit, ...,type=NULL, ptype="pred",pthreshold=NULL, ylevels=NULL,
                            n.trees=fit$n.trees,ptrans=NULL) {
-  if (is.null(ylevels))
-    ylevels <- fit$classes
+  # if (is.null(ylevels))
+  #   ylevels <- fit$classes
 
   if (ptype=="pred" && is.null(ylevels)){
     # numeric prediction
@@ -381,6 +441,7 @@ CVpredict.gbm <- function (fit, ...,type=NULL, ptype="pred",pthreshold=NULL, yle
   else if (ptype=="pred"){
     # calc predicted classes
     p <- predict(fit,...,type="response", n.trees=n.trees)
+    pthreshold <- .5
   }
   else {
     # ptype is "prob" or "probmatrix", calculate probs
@@ -412,7 +473,8 @@ CVpredict.ksvm <- function (fit,newdata,...,type=NULL, ptype="pred",pthreshold=N
     ylevels <- levels(kernlab::fitted(fit))
 
   if (!is.null(newdata))
-  newdata <- newdata[, colnames(fit@xmatrix[[ 1]])]
+  # newdata <- newdata[, colnames(fit@xmatrix[[ 1]])]
+  newdata <- newdata[, attr(fit@terms, "term.labels")]
 
   if (ptype=="pred" && is.null(ylevels)){
     # numeric prediction
@@ -486,6 +548,7 @@ CVpredict.glmnet.formula <- function(fit,newdata,..., type="response",ptype="pre
   if (is.null(s)) s <- fit$lambda[1]
   p <-predict(fit,newdata,type=type,s=s,...)
   p <- drop(p)
+
   if (inherits(fit, "lognet")  && ptype=="pred"){
     if (is.null(pthreshold)) pthreshold <- .5
   }
@@ -497,8 +560,12 @@ CVpredict.glmnet.formula <- function(fit,newdata,..., type="response",ptype="pre
 #' @describeIn CVpredict  CVpredict method
 #' @export
 #'
-CVpredict.cv.glmnet.formula <- function(fit,newdata,..., type="response",ptype="pred",pthreshold=NULL,ylevels=NULL,ptrans=NULL){
-  CVpredict.glmnet.formula(fit,newdata,...,type=type,ptype=ptype,pthreshold=pthreshold,ylevels=ylevels,ptrans=ptrans,
+CVpredict.cv.glmnet.formula <- function(fit,newdata,..., type="response",ptype="pred",pthreshold=NULL,
+                                        ylevels=NULL,ptrans=NULL){
+  fit1 <- fit$glmnet.fit
+  if (inherits(fit1, "lognet") & ptype=="pred" & is.null(pthreshold)) pthreshold <- .5
+  CVpredict.glmnet.formula(fit,newdata,...,type=type,ptype=ptype,pthreshold=pthreshold,
+                           ylevels=ylevels,ptrans=ptrans,
              s=fit$lambda.min)
 }
 
@@ -507,40 +574,41 @@ CVpredict.cv.glmnet.formula <- function(fit,newdata,..., type="response",ptype="
 #' @export
 
 CVpredict.keras.engine.training.Model  <- function(fit, newdata,...,  ptype = "pred", pthreshold = NULL,
-                                              ylevels = NULL, ptrans = NULL, batch_size = 32,response=NULL, predictors=NULL){
-
-
+                                                   ylevels = NULL, ptrans = NULL, batch_size = 32,response=NULL, predictors=NULL){
+  
+  
   if (is.null(ylevels)){
-  if (!is.null(response))
-     ylevels <- levels(newdata[, response])
+    if (!is.null(response))
+      ylevels <- levels(newdata[[response]])
   }
-
+  
   if (!is.null(predictors)) x <- newdata[,predictors] else x <- newdata
-   x <- as.matrix(x)
-
-
-   if (ptype=="pred" && is.null(ylevels)){
-     # numeric prediction
-     p <- as.numeric(keras::predict_proba(fit,x,  batch_size = batch_size,...))
-   }
-   else if (ptype=="pred" && is.numeric(pthreshold)){
-     # calc probmatrix for class prediction using threshold
-     p <- keras::predict_proba(fit,x,  batch_size = batch_size,...)
-     if(length(ylevels)==2){
-       p <- cbind(1-p,p)
-     }
-   }
-   else if (ptype=="pred"){
-     # calc predicted classes
-     p <- keras::predict_classes(fit,x,  batch_size = batch_size,...) +1
-     p <- factor(ylevels[p], levels=ylevels)
-   }
-   else {
-     # ptype is "prob" or "probmatrix", calculate probs
-     p <- keras::predict_proba(fit,x,  batch_size = batch_size,...)
-   }
-   calcPred(ptype,p, pthreshold, ylevels,ptrans)
+  x <- as.matrix(x)
+ 
+  
+  if (ptype=="pred" && is.null(ylevels)){
+    # numeric prediction
+    p <- as.numeric(predict(fit,x,  batch_size = batch_size,...))
+  }
+  else if (ptype=="pred" && is.numeric(pthreshold)){
+    # calc probmatrix for class prediction using threshold
+    p <- keras::predict_proba(fit,x,  batch_size = batch_size,...)
+    if(length(ylevels)==2){
+      p <- cbind(1-p,p)
+    }
+  }
+  else if (ptype=="pred"){
+    # calc predicted classes
+    p <- keras::predict_classes(fit,x,  batch_size = batch_size,...) +1
+    p <- factor(ylevels[p], levels=ylevels)
+  }
+  else {
+    # ptype is "prob" or "probmatrix", calculate probs
+    p <- keras::predict_proba(fit,x,  batch_size = batch_size,...)
+  }
+  calcPred(ptype,p, pthreshold, ylevels,ptrans)
 }
+
 
 
 
@@ -658,7 +726,7 @@ CVpredict.Mclust <- function (fit, newdata,..., ptype="pred",pthreshold=NULL, yl
 }
 
 
-#' @describeIn CVpredict  CVpredict method
+#' @describeIn CVpredict  CVpredict method for caret
 #' @export
 CVpredict.train <- function(fit,newdata,..., type="response",ptype="pred",pthreshold=NULL,ylevels=NULL,ptrans=NULL){
   
@@ -713,7 +781,163 @@ CVpredict.bartMachine <- function (fit,newdata,...,type=NULL, ptype="pred",pthre
   else {
     # ptype is "prob" or "probmatrix", calculate probs
     # bart gives prob of first class
-    p <- 1-predict(fit,newdata,...,type="prob")
+    p <- 1-predict(fit,newdata,...,type="prob", verbose=FALSE)
   }
   calcPred(ptype,p, NULL, ylevels,ptrans)
 }
+
+#' @describeIn CVpredict  CVpredict method for parsnip
+#' @export
+CVpredict.model_fit <- function (fit, ...,type=NULL, ptype="pred",pthreshold=NULL, ylevels=NULL,
+                                 ptrans=NULL,pinterval=NULL, pinterval_level=0.95) {
+  if (is.null(ylevels))
+    ylevels <- fit$lvl 
+  
+  if (ptype=="pred" && is.null(ylevels)){
+    # numeric prediction
+    p <- predict(fit,...,type="numeric")[[1]]
+    if (!is.null(pinterval)){
+      intype <- if (pinterval=="prediction") "pred_int" else "conf_int"
+      pint <- as.matrix(predict(fit,...,type=intype, level=pinterval_level))
+      p <- cbind(p,pint)
+    }
+  }
+  else if (ptype=="pred" && is.numeric(pthreshold)){
+    # calc probmatrix for class prediction using threshold
+    p <- as.matrix(predict(fit,...,type="prob"))
+  }
+  else if (ptype=="pred"){
+    # calc predicted classes
+    p <- predict(fit,...,type="class")[[1]]
+  }
+  else if (ptype=="prob"){
+    p <- as.matrix(predict(fit,...,type="prob"))
+    p <- p[,ncol(p)]
+    if (!is.null(pinterval)){
+      intype <- if (pinterval=="prediction") "pred_int" else "conf_int"
+      pint <- as.matrix(predict(fit,...,type=intype, level=pinterval_level))
+      # use only interval for last factor level
+      npint <- ncol(pint)
+      p <- cbind(p,pint[,(npint-1):npint])
+    }
+    
+  }
+  else {
+    # ptype is"probmatrix", calculate probs
+    p <- as.matrix(predict(fit,...,type="prob"))
+  }
+  if (is.null(pinterval) | !is.matrix(p))
+    calcPred(ptype,p, pthreshold, ylevels,ptrans)
+  else calcPred(ptype,p[,1], pthreshold, ylevels,ptrans, p[,2:3])
+}
+
+
+#' @describeIn CVpredict  CVpredict method for mlr
+#' @export
+CVpredict.WrappedModel <- function (fit, newdata,...,type=NULL, ptype="pred",pthreshold=NULL, ylevels=NULL,
+                                 ptrans=NULL,pinterval=NULL,pinterval_level=0.95) {
+  if (is.null(ylevels))
+    ylevels <- fit$task.desc$class.levels 
+  newdata <- newdata[,fit$features]
+  fitp <- predict(fit, newdata=newdata,...)
+  
+  if (!(inherits(fitp, "PredictionClassif") | inherits(fitp, "PredictionRegr") 
+        | inherits(fitp, "PredictionCluster")))
+  # if (!(class(fitp)[1] %in% c("PredictionRegr","PredictionClassif","PredictionCluster")))
+    stop(paste("Condvis does not work for class" ,class(fitp)[1]))
+  if (ptype=="pred" && is.null(ylevels)){
+    # numeric prediction
+    p <- mlr::getPredictionResponse(fitp)
+    if (isTRUE(pinterval=="confidence")){
+      
+      se <- mlr::getPredictionSE(fitp)
+      if (!is.null(se)){
+        se <- -se*qnorm((1-pinterval_level)/2)
+        p <- cbind(p,p-se, p+se)
+      }
+    }
+  }
+  else if (ptype=="pred" && is.numeric(pthreshold)){
+    # calc probmatrix for class prediction using threshold
+    p <- as.matrix(mlr::getPredictionProbabilities(fitp))
+  }
+  else if (ptype=="pred"){
+    # calc predicted classes
+    p <- mlr::getPredictionResponse(fitp)
+  }
+  else if (ptype=="prob"){
+    p <- as.matrix(mlr::getPredictionProbabilities(fitp))
+    p <- p[,ncol(p)]
+    # if (!is.null(pinterval)){
+    #   intype <- if (pinterval=="prediction") "pred_int" else "conf_int"
+    #   pint <- as.matrix(predict(fit,...,type=intype))
+    #   # use only interval for last factor level
+    #   npint <- ncol(pint)
+    #   p <- cbind(p,pint[,(npint-1):npint])
+    # }
+    
+  }
+  else {
+    # ptype is"probmatrix", calculate probs
+    p <- as.matrix(mlr::getPredictionProbabilities(fitp))
+  }
+  if (is.null(pinterval) | !is.matrix(p))
+    calcPred(ptype,p, pthreshold, ylevels,ptrans)
+  else calcPred(ptype,p[,1], pthreshold, ylevels,ptrans, p[,2:3])
+}
+
+
+
+#' @describeIn CVpredict  CVpredict method for mlr3
+#' @export
+CVpredict.Learner <- function (fit, newdata,...,type=NULL, ptype="pred",pthreshold=NULL, ylevels=NULL,
+                                    ptrans=NULL,pinterval=NULL,pinterval_level=0.95) {
+ 
+  task1 <- fit$state$train_task
+   if (is.null(ylevels))
+    ylevels <- task1$class_names
+ 
+  preds <- fit$predict_newdata(newdata = newdata)
+  if (!(inherits(preds, "PredictionClassif") | inherits(preds, "PredictionRegr")))
+    stop(paste("Condvis does not work for class" ,class(preds)[1]))
+  
+  if (ptype=="pred" && is.null(ylevels)){
+    # numeric prediction
+    # print("numeric prediction")
+    p <- preds$response
+    if (isTRUE(pinterval=="confidence")){
+      
+      se <- preds$se
+      if (!is.null(se) & length(se) == length(p)){
+        se <- -se*qnorm((1-pinterval_level)/2)
+        p <- cbind(p,p-se, p+se)
+      }
+    }
+  }
+  else if (ptype=="pred" && is.numeric(pthreshold)){
+    # calc probmatrix for class prediction using threshold
+    # print("threshold")
+    p <- preds$data$prob
+  }
+  else if (ptype=="pred"){
+    # calc predicted classes
+    # print("pred")
+    p <- preds$response
+  }
+  else if (ptype=="prob"){
+    # print("prob")
+    p <- preds$data$prob
+    p <- p[,ncol(p)]
+  }
+  else {
+    # ptype is"probmatrix", calculate probs
+    # print("probmatrix")
+    p <- preds$data$prob
+  }
+  if (is.null(pinterval) | !is.matrix(p))
+    calcPred(ptype,p, pthreshold, ylevels,ptrans)
+  else calcPred(ptype,p[,1], pthreshold, ylevels,ptrans, p[,2:3])
+}
+
+
+
