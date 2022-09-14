@@ -16,6 +16,7 @@
 #'@param showsim if TRUE, shows sim in conditionplots with points/lines. Defaults to TRUE with 150 or fewer cases.
 #'@param cPlotPCP if TRUE, conditionplots are drawn as a single PCP (for more than two conditionvars)
 #'@return a dataframe of conditions
+#' @noRd 
 createCVUI <- function(CVfit,data,response,sectionvars,preds=NULL, pointColor,threshold=1,thresholdmax, tours,probs,
                        view3d, showsim, cPlotPCP){
   colorvars <- sapply(data, is.factor)
@@ -37,13 +38,7 @@ createCVUI <- function(CVfit,data,response,sectionvars,preds=NULL, pointColor,th
     tags$head(tags$style("#quit{font-size: 12px;}")),
 
     sidebarLayout(sidebarPanel(
-      # selectInput(inputId = "sectionvar",
-      #                                      label = "Choose a sectionvar",
-      #                                      choices = preds,
-      #                                      width=220,
-      #                                      selected = sectionvars[1]
-      #                                      ),
-                             #  uiOutput("select2"),
+   
       
                                uiOutput("cplots"),
                                tags$br(),
@@ -108,9 +103,7 @@ createCVUI <- function(CVfit,data,response,sectionvars,preds=NULL, pointColor,th
              
                       
              fluidRow(column(9, offset=1, wellPanel(
-               # fluidRow(column(5, offset=0,checkboxInput("showtour", "Show tour options", FALSE))),
-               # conditionalPanel(
-               #   condition = "input.showtour==true",
+             
               fluidRow(
                column(4, offset=0, 
                       selectInput(inputId = "tour",
@@ -129,9 +122,9 @@ createCVUI <- function(CVfit,data,response,sectionvars,preds=NULL, pointColor,th
              column(4, offset=1, sliderInput(inputId = "ninterp",ticks=FALSE,
                                              label = "Interp steps",min=0, max=6,value=0,step=1
              ))))))
-             # )
+            
+              # fluidRow( column(3, offset=1, downloadButton("downloadPlots", "Save plots")))
              
-
              ), position="right")
   )
 

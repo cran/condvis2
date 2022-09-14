@@ -4,7 +4,7 @@ knitr::opts_chunk$set(
   comment = "#>",
   fig.width=5, fig.height=5 ,fig.align="center", eval=FALSE
 )
-fpath <- "vignettefigs/"
+fpath <- ""
 
 ## -----------------------------------------------------------------------------
 #  library(keras)

@@ -4,7 +4,7 @@ knitr::opts_chunk$set(
   comment = "#>",
   fig.width=5, fig.height=5 ,fig.align="center"
 )
-fpath <- "vignettefigs/"
+fpath <- ""
 
 ## -----------------------------------------------------------------------------
 ozone <- na.omit(airquality)
@@ -84,4 +84,17 @@ knitr::include_graphics(paste0(fpath, "ozone5.png"))
 
 ## ----echo=FALSE, out.width='100%'---------------------------------------------
 knitr::include_graphics(paste0(fpath, "ozone6.png"))
+
+## ----eval=F-------------------------------------------------------------------
+#  library(ks)
+#  data(iris)
+#  irisf <- kde(x=iris[,1:3])
+#  
+#  condvis(data = iris, model = list(kde=irisf),
+#          sectionvars= c("Sepal.Length", "Sepal.Width"),
+#          conditionvars= "Petal.Length", density=T)
+#  
+
+## ----echo=FALSE, out.width='100%'---------------------------------------------
+knitr::include_graphics(paste0(fpath, "iris.png"))
 

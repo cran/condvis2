@@ -1,6 +1,4 @@
-#' @title Make a list of variable pairings for condition selecting plots
-#'
-#'
+#' @title Make a list of variable pairings for condition selecting plots.
 #' @description This function arranges a number of variables in pairs, ordered
 #' by their bivariate relationships. The goal is to discover which variable
 #' pairings are most helpful in avoiding extrapolations when exploring the data
@@ -25,9 +23,10 @@
 #'   \strong{condvis} Package in R.''\emph{Journal of Statistical Software},
 #'   \strong{81}(5), pp. 1-20. <URL:http://dx.doi.org/10.18637/jss.v081.i05>.
 
+#' @noRd 
 arrangeC <- function (data, method = "default")
 {
-  singles <- which(sapply(data, function(v) is.factor(v) & length(levels(v)>15)))
+  singles <- which(sapply(data, function(v) is.factor(v) & length(levels(v))>15))
   if (length(singles) ==0) data.singles <- NULL
   else {
     data.singles <- list(names(data[,singles,drop=FALSE]))
@@ -192,11 +191,10 @@ pairoff <- function(vars){
 
 arrangePCP <- function (data, method = "default"){
   d <- as.matrix(data)
-  if (is.numeric(d)){
+  if (is.numeric(d) & ncol(d)> 2){
     d1 <- as.dist(cor(d))
   o <- dser(d1)
   }
   else o <- 1:ncol(d)
-  
   names(data)[o]
 }

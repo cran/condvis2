@@ -413,6 +413,8 @@ CVpredict.svm <- function (fit,...,type=NULL, ptype="pred",pthreshold=NULL, ylev
       p <- matrix(0, nrow=length(p1), ncol=length(ylevels))
       p[,as.numeric(p1)] <- 1
     }
+    else if (length(ylevels) == ncol(p))
+      p <- p[,ylevels]
   }
   calcPred(ptype,p, pthreshold, ylevels,ptrans)
 }
@@ -786,6 +788,68 @@ CVpredict.bartMachine <- function (fit,newdata,...,type=NULL, ptype="pred",pthre
   calcPred(ptype,p, NULL, ylevels,ptrans)
 }
 
+
+#' @describeIn CVpredict  CVpredict method
+#' @export
+CVpredict.wbart <- function (fit,newdata,...,type=NULL, ptype="pred",pthreshold=NULL, ylevels=NULL,ptrans=NULL) {
+  # BART for numerical response
+  
+  cols <- names(fit$varcount.mean)
+  
+  newdata <- BART::bartModelMatrix(newdata)[,cols]
+  if (ptype=="pred" && is.null(ylevels)){
+    # numeric prediction
+    p <- colMeans(predict(fit,newdata,mc.cores=getOption("mc.cores", 1),...))
+  }
+  else stop("Argument ptype must be 'pred'")
+  calcPred(ptype,p, NULL, ylevels,ptrans)
+}
+
+
+#' @describeIn CVpredict  CVpredict method
+#' @export
+CVpredict.lbart <- function (fit,newdata,...,type=NULL, ptype="pred",pthreshold=NULL, ylevels=NULL,ptrans=NULL) {
+  # logistic BART
+  
+  cols <- names(fit$varcount.mean)
+  if (is.null(ylevels))
+    ylevels <- c("0","1")
+  
+  newdata <- BART::bartModelMatrix(newdata)[,cols]
+  p <- predict(fit,newdata,mc.cores=getOption("mc.cores", 1),...)$prob.test.mean
+  if (is.null(pthreshold)) pthreshold <- .5
+  calcPred(ptype,p, pthreshold, ylevels,ptrans)
+}
+
+
+#' @describeIn CVpredict  CVpredict method
+#' @export
+CVpredict.pbart <- function (fit,newdata,...,type=NULL, ptype="pred",pthreshold=NULL, ylevels=NULL,ptrans=NULL) {
+  # logistic BART
+  
+  cols <- names(fit$varcount.mean)
+  if (is.null(ylevels))
+    ylevels <- c("0","1")
+  
+  newdata <- BART::bartModelMatrix(newdata)[,cols]
+  p <- predict(fit,newdata,mc.cores=getOption("mc.cores", 1),...)$prob.test.mean
+  if (is.null(pthreshold)) pthreshold <- .5
+  calcPred(ptype,p, pthreshold, ylevels,ptrans)
+}
+
+
+#' @describeIn CVpredict  CVpredict method
+#' @export
+CVpredict.bart <- function (fit,newdata,...,type=NULL, ptype="pred",pthreshold=NULL, ylevels=NULL,ptrans=NULL) {
+  
+  if (is.null(ylevels) && fit$fit$control@binary)
+    ylevels <- c("0","1")
+  p <- colMeans(predict(fit,newdata))
+  if (is.null(pthreshold)) pthreshold <- .5
+  calcPred(ptype,p, pthreshold, ylevels,ptrans)
+}
+
+
 #' @describeIn CVpredict  CVpredict method for parsnip
 #' @export
 CVpredict.model_fit <- function (fit, ...,type=NULL, ptype="pred",pthreshold=NULL, ylevels=NULL,
@@ -825,6 +889,7 @@ CVpredict.model_fit <- function (fit, ...,type=NULL, ptype="pred",pthreshold=NUL
   else {
     # ptype is"probmatrix", calculate probs
     p <- as.matrix(predict(fit,...,type="prob"))
+    colnames(p)<- ylevels
   }
   if (is.null(pinterval) | !is.matrix(p))
     calcPred(ptype,p, pthreshold, ylevels,ptrans)
@@ -859,14 +924,14 @@ CVpredict.WrappedModel <- function (fit, newdata,...,type=NULL, ptype="pred",pth
   }
   else if (ptype=="pred" && is.numeric(pthreshold)){
     # calc probmatrix for class prediction using threshold
-    p <- as.matrix(mlr::getPredictionProbabilities(fitp))
+    p <- as.matrix(mlr::getPredictionProbabilities(fitp, ylevels))
   }
   else if (ptype=="pred"){
     # calc predicted classes
     p <- mlr::getPredictionResponse(fitp)
   }
   else if (ptype=="prob"){
-    p <- as.matrix(mlr::getPredictionProbabilities(fitp))
+    p <- as.matrix(mlr::getPredictionProbabilities(fitp, ylevels))
     p <- p[,ncol(p)]
     # if (!is.null(pinterval)){
     #   intype <- if (pinterval=="prediction") "pred_int" else "conf_int"
@@ -879,7 +944,7 @@ CVpredict.WrappedModel <- function (fit, newdata,...,type=NULL, ptype="pred",pth
   }
   else {
     # ptype is"probmatrix", calculate probs
-    p <- as.matrix(mlr::getPredictionProbabilities(fitp))
+    p <- as.matrix(mlr::getPredictionProbabilities(fitp,ylevels))
   }
   if (is.null(pinterval) | !is.matrix(p))
     calcPred(ptype,p, pthreshold, ylevels,ptrans)
